@@ -12,6 +12,15 @@ from db_details import CON_DATA
 #     "collation": "utf8mb4_general_ci"
 # }
 
+cpu_frequency_desc = ['current', 'min', 'max']
+cpu_loads_avg_desc = ['1_min', '5_min', '15_min']
+memory_usage_desc = ['total', 'available', 'percent', 'used']
+net_io_desc = ['Mbytes_sent', 'Mbytes_recv', 'packets_sent',
+               'packets_recv', 'errin', 'errout', 'dropin', 'dropout']
+temps_desc = ['current', 'high', 'critical']
+
+LINE_AMOUNT = psutil.cpu_count(logical=True) + 1
+
 mydb = mysql.connector.connect(**CON_DATA)
 
 
@@ -30,7 +39,7 @@ mycursor.execute(
 
 
 psutil.cpu_percent()
-init_list = [(None, )] * psutil.cpu_count(logical=True)
+init_list = [(None, )] * LINE_AMOUNT
 mycursor.executemany(
     "INSERT INTO specs (cpu_percent) VALUES (%s)", init_list)
 
@@ -43,12 +52,24 @@ def mem_convert(value):
         # bytes // 1024 // 1024 = MB
 
 
-cpu_frequency_desc = ['current', 'min', 'max']
-cpu_loads_avg_desc = ['1_min', '5_min', '15_min']
-memory_usage_desc = ['total', 'available', 'percent', 'used']
-net_io_desc = ['Mbytes_sent', 'Mbytes_recv', 'packets_sent',
-               'packets_recv', 'errin', 'errout', 'dropin', 'dropout']
-temps_desc = ['current', 'high', 'critical']
+def crit_check(a, b):
+    try:
+        if a <= b:
+            return "Normal"
+        else:
+            return "CRITICAL"
+    except TypeError:
+        return None
+
+
+def crit_low_check(a, b):
+    try:
+        if a >= b:
+            return "Normal"
+        else:
+            return "CRITICAL"
+    except TypeError:
+        return None
 
 
 def main():
@@ -69,32 +90,58 @@ def main():
     sensors_temps = psutil.sensors_temperatures()
     sensors_fans = psutil.sensors_fans()
 
-    for i in range(len(cpu_percent)):
-        percents.append((cpu_percent[i], i + 1))
+    crit = None
+    for i, x in enumerate(cpu_percent):
+        percents.append((x, i + 1))
+        if crit == "Normal" or crit is None:
+            crit = crit_check(x, 90)
+    percents.append((crit, LINE_AMOUNT))
 
-    for i in range(3):
+    for i, x in enumerate(cpu_frequency):
         freqs.append(
-            (cpu_frequency_desc[i], round(cpu_frequency[i], 3), i + 1))
+            (cpu_frequency_desc[i], round(x, 3), i + 1))
+
+    crit = None
+    for i, x in enumerate(cpu_loads_avg):
         loads.append((cpu_loads_avg_desc[i],
-                      round(cpu_loads_avg[i] /
-                            psutil.cpu_count() * 100, 3), i + 1))
-        mem.append(
-            (memory_usage_desc[i], mem_convert(memory_usage[i]), i + 1))
-    mem.append((memory_usage_desc[3], mem_convert(
-        memory_usage[0] - memory_usage[1]), 4))
+                      round(x / psutil.cpu_count() * 100, 3), i + 1))
+        if crit == "Normal" or crit is None:
+            crit = crit_check(x, 90)
+    loads.append((None, crit, LINE_AMOUNT))
+
+    for i, x in enumerate(memory_usage[:4]):
+        if i == 3:
+            x = memory_usage[0] - memory_usage[1]
+        mem.append((memory_usage_desc[i], mem_convert(x), i + 1))
+
+    for i, x in enumerate(net_io):
+        if i < 2:
+            x = mem_convert(x)
+        net.append((net_io_desc[i], x, i + 1))
 
     for i in range(2):
-        net.append((net_io_desc[i], mem_convert(net_io[i]), i + 1))
-    for i in range(2, 8):
-        net.append((net_io_desc[i], net_io[i], i + 1))
-
-    for i in range(3):
         temps.append((temps_desc[i], sensors_temps['nvme'][0][i + 1],
                       sensors_temps['k10temp'][0][i + 1], i + 1))
+    temps.append((temps_desc[2], sensors_temps['nvme'][0][2],
+                  90.0, 3))
+    temps.append((None,
+                  crit_check(temps[0][1], temps[2][1]),
+                  crit_check(temps[0][2], temps[2][2]),
+                  LINE_AMOUNT))
 
+    crit = None
     for fan_list in sensors_fans.values():
         for id, fan in enumerate(fan_list):
+            if fan.current == 0:
+                speed = None
+            else:
+                speed = fan.current
+            if crit == "Normal" or crit is None:
+                crit = crit_check(speed, 3000)
+            if crit == "Normal" or crit is None:
+                crit = crit_low_check(speed, 100)
             fans.append((fan.label, fan.current, id + 1))
+    fans.append((None, crit, LINE_AMOUNT))
 
     mycursor.executemany(
         "UPDATE specs SET cpu_percent=%s WHERE id=%s", percents)
