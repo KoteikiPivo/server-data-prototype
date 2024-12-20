@@ -52,7 +52,13 @@ def mem_convert(value):
         # bytes // 1024 // 1024 = MB
 
 
-def crit_check(a, b):
+def crit_check(crit, new):
+    if crit is None or crit == "Normal" and new == "CRITICAL":
+        return new
+    return crit
+
+
+def crit_high_check(a, b):
     try:
         if a <= b:
             return "Normal"
@@ -93,8 +99,7 @@ def main():
     crit = None
     for i, x in enumerate(cpu_percent):
         percents.append((x, i + 1))
-        if crit == "Normal" or crit is None:
-            crit = crit_check(x, 90)
+        crit = crit_check(crit, crit_high_check(x, 90))
     percents.append((crit, LINE_AMOUNT))
 
     for i, x in enumerate(cpu_frequency):
@@ -105,14 +110,14 @@ def main():
     for i, x in enumerate(cpu_loads_avg):
         loads.append((cpu_loads_avg_desc[i],
                       round(x / psutil.cpu_count() * 100, 3), i + 1))
-        if crit == "Normal" or crit is None:
-            crit = crit_check(x, 90)
+        crit = crit_check(crit, crit_high_check(x, 90))
     loads.append((None, crit, LINE_AMOUNT))
 
     for i, x in enumerate(memory_usage[:4]):
         if i == 3:
             x = memory_usage[0] - memory_usage[1]
         mem.append((memory_usage_desc[i], mem_convert(x), i + 1))
+    mem.append((None, crit_high_check(mem[1][2], 90), LINE_AMOUNT))
 
     for i, x in enumerate(net_io):
         if i < 2:
@@ -125,8 +130,8 @@ def main():
     temps.append((temps_desc[2], sensors_temps['nvme'][0][2],
                   90.0, 3))
     temps.append((None,
-                  crit_check(temps[0][1], temps[2][1]),
-                  crit_check(temps[0][2], temps[2][2]),
+                  crit_high_check(temps[0][1], temps[2][1]),
+                  crit_high_check(temps[0][2], temps[2][2]),
                   LINE_AMOUNT))
 
     crit = None
@@ -136,10 +141,8 @@ def main():
                 speed = None
             else:
                 speed = fan.current
-            if crit == "Normal" or crit is None:
-                crit = crit_check(speed, 3000)
-            if crit == "Normal" or crit is None:
-                crit = crit_low_check(speed, 100)
+            crit = crit_check(crit, crit_high_check(speed, 3000))
+            crit = crit_check(crit, crit_low_check(speed, 100))
             fans.append((fan.label, fan.current, id + 1))
     fans.append((None, crit, LINE_AMOUNT))
 
